@@ -31,7 +31,7 @@ Before running this script, ensure that the following software is installed on y
 2. Run the script using Python:
 
     ```bash
-    python youtube_downloader.py
+    python downloader.py
     ```
 
 3. Follow the prompts to select the download format, provide the YouTube URL, and choose a download directory.
