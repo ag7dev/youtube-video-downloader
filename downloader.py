@@ -3,17 +3,21 @@ import os
 import sys
 import time
 import threading
+import json
 from itertools import cycle
 from colorama import Fore, Back, Style, init
 from shutil import which
+import subprocess
 
-# Initialize colorama for cross-platform color support
+# Initialize colorama 
 init(autoreset=True)
 
 # --------------------------
 # Constants and Configuration
 # --------------------------
+CONFIG_FILE = "config.json"
 DEFAULT_DOWNLOAD_DIR = os.path.join(os.environ['USERPROFILE'], 'Desktop')
+
 FFMPEG_MSG = f"""
 {Back.RED}{Fore.WHITE} FFMPEG REQUIRED {Style.RESET_ALL}
 {Fore.YELLOW}Please install FFmpeg for audio conversions:
@@ -25,7 +29,6 @@ FFMPEG_MSG = f"""
 Or use the following command:
 > winget install ffmpeg
 --> And then restart this program
-
 """
 
 # --------------------------
@@ -39,13 +42,13 @@ class Spinner:
 
     def spin(self, message):
         self.running = True
-        sys.stdout.write("\033[?25l")  # Hide cursor
+        sys.stdout.write("\033[?25l") 
         while self.running:
             sys.stdout.write(f"\r{Fore.BLUE}{next(self.spinner)}{Style.RESET_ALL} {message}...  ")
             sys.stdout.flush()
             time.sleep(0.1)
-        sys.stdout.write("\033[K")  # Clear line
-        sys.stdout.write("\033[?25h")  # Show cursor
+        sys.stdout.write("\033[K") 
+        sys.stdout.write("\033[?25h")  
 
     def start(self, message):
         self.thread = threading.Thread(target=self.spin, args=(message,))
@@ -61,7 +64,15 @@ class Spinner:
 # --------------------------
 class YoutubeDownloader:
     def __init__(self):
-        self.download_dir = DEFAULT_DOWNLOAD_DIR
+        self.config = self.load_config()
+        self.download_dir = self.config.get('download_dir', DEFAULT_DOWNLOAD_DIR)
+        if not os.path.isdir(self.download_dir):
+            print(f"{Fore.YELLOW}The download directory in config does not exist. Reverting to default directory.{Style.RESET_ALL}")
+            self.download_dir = DEFAULT_DOWNLOAD_DIR
+            self.config['download_dir'] = DEFAULT_DOWNLOAD_DIR
+            self.save_config()
+            time.sleep(1)
+            
         self.ydl_opts = {
             'outtmpl': os.path.join(self.download_dir, '%(title)s.%(ext)s'),
             'progress_hooks': [self._progress_hook],
@@ -71,6 +82,25 @@ class YoutubeDownloader:
         self.current_status = {}
         self.downloaded_filename = None
 
+    def load_config(self):
+        if not os.path.exists(CONFIG_FILE):
+            config = {'download_dir': DEFAULT_DOWNLOAD_DIR}
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(config, f, indent=4)
+            return config
+        else:
+            with open(CONFIG_FILE, 'r') as f:
+                try:
+                    config = json.load(f)
+                except Exception:
+                    config = {'download_dir': DEFAULT_DOWNLOAD_DIR}
+            return config
+
+    def save_config(self):
+        self.config['download_dir'] = self.download_dir
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(self.config, f, indent=4)
+
     def _progress_hook(self, d):
         if d['status'] == 'downloading':
             self.current_status = d
@@ -78,11 +108,6 @@ class YoutubeDownloader:
             self.spinner.stop()
             self.downloaded_filename = d.get('filename')
             print(f"\r{Fore.GREEN}✓ Processing complete{Style.RESET_ALL}")
-
-    def _validate_ffmpeg(self):
-        if not which('ffmpeg'):
-            print(FFMPEG_MSG)
-            sys.exit(1)
 
     def _display_header(self):
         os.system('cls' if os.name == 'nt' else 'clear')
@@ -105,9 +130,10 @@ class YoutubeDownloader:
             if os.path.isdir(new_dir):
                 self.download_dir = new_dir
                 self.ydl_opts['outtmpl'] = os.path.join(self.download_dir, '%(title)s.%(ext)s')
-                print(f"\n{Fore.GREEN}✓ Directory updated{Style.RESET_ALL}")
+                self.save_config()
+                print(f"\n{Fore.GREEN}✓ Directory updated and saved to config{Style.RESET_ALL}")
             else:
-                print(f"\n{Fore.RED}⚠ Directory not found! Using default{Style.RESET_ALL}")
+                print(f"\n{Fore.RED}⚠ Directory not found! Keeping previous setting{Style.RESET_ALL}")
             time.sleep(1)
 
     def _get_choice(self, prompt, options):
@@ -134,7 +160,13 @@ class YoutubeDownloader:
         self._display_header()
         print(f"{Fore.YELLOW}📄 Video Details:{Style.RESET_ALL}")
         print(f"  {Fore.CYAN}▸ Title: {info.get('title', 'N/A')}{Style.RESET_ALL}")
-        print(f"  {Fore.CYAN}▸ Duration: {info.get('duration_string', 'N/A')}{Style.RESET_ALL}")
+        duration = info.get('duration')
+        if duration:
+            minutes, seconds = divmod(duration, 60)
+            duration_string = f"{minutes}m {seconds}s"
+        else:
+            duration_string = "N/A"
+        print(f"  {Fore.CYAN}▸ Duration: {duration_string}{Style.RESET_ALL}")
         print(f"  {Fore.CYAN}▸ Channel: {info.get('uploader', 'N/A')}{Style.RESET_ALL}")
         
         if filesize := info.get('filesize') or info.get('filesize_approx'):
@@ -155,7 +187,12 @@ class YoutubeDownloader:
         }
         self.ydl_opts.update(format_options[choice])
 
-    def download(self):
+    def _validate_ffmpeg(self):
+        if not which('ffmpeg'):
+            print(FFMPEG_MSG)
+            sys.exit(1)
+
+    def download_video(self):
         try:
             self._validate_ffmpeg()
             self._display_header()
@@ -187,7 +224,7 @@ class YoutubeDownloader:
             if self.downloaded_filename:
                 print(f"{Fore.CYAN}▶ File saved to:{Style.RESET_ALL}")
                 print(f"{Fore.LIGHTBLACK_EX}{self.downloaded_filename}{Style.RESET_ALL}")
-
+                self._post_download_options()
         except youtube_dl.DownloadError as e:
             self.spinner.stop()
             print(f"\n{Back.RED}{Fore.WHITE} ERROR {Style.RESET_ALL} {str(e)}")
@@ -198,11 +235,54 @@ class YoutubeDownloader:
             self.spinner.stop()
             print(f"\n{Back.RED}{Fore.WHITE} UNEXPECTED ERROR {Style.RESET_ALL} {str(e)}")
         finally:
-            input(f"\n{Fore.LIGHTBLACK_EX}👋 Press Enter to exit...{Style.RESET_ALL}")
+            input(f"\n{Fore.LIGHTBLACK_EX}👋 Press Enter to return to menu...{Style.RESET_ALL}")
+
+    def _post_download_options(self):
+        while True:
+            self._display_header()
+            print(f"{Fore.YELLOW}What would you like to do next?{Style.RESET_ALL}")
+            options = [
+                ("📂", "Open containing folder"),
+                ("▶", "Open downloaded file"),
+                ("❌", "Do nothing")
+            ]
+            for i, (emoji, text) in enumerate(options, 1):
+                print(f"  {Fore.YELLOW}{i}) {emoji} {text}{Style.RESET_ALL}")
+            try:
+                choice = input(f"\n{Fore.YELLOW}Enter choice (1-{len(options)}):{Style.RESET_ALL} ")
+                if int(choice) == 1:
+                    folder = os.path.dirname(self.downloaded_filename)
+                    try:
+                        os.startfile(folder)
+                    except AttributeError:
+                        subprocess.call(["xdg-open", folder])
+                    break
+                elif int(choice) == 2:
+                    try:
+                        os.startfile(self.downloaded_filename)
+                    except AttributeError:
+                        subprocess.call(["xdg-open", self.downloaded_filename])
+                    break
+                elif int(choice) == 3:
+                    break
+                else:
+                    raise ValueError
+            except (ValueError, KeyError):
+                print(f"\n{Back.RED}{Fore.WHITE} ERROR {Style.RESET_ALL} Invalid choice!")
+                time.sleep(1)
 
 # --------------------------
-# Main Execution
+# Main Execution Loop
 # --------------------------
-if __name__ == "__main__":
+def main():
     downloader = YoutubeDownloader()
-    downloader.download()
+    while True:
+        downloader.download_video()
+        downloader._display_header()
+        again = input(f"\n{Fore.YELLOW}Do you want to download another video? (y/n):{Style.RESET_ALL} ").lower()
+        if again != 'y':
+            print(f"\n{Fore.CYAN}Goodbye!{Style.RESET_ALL}")
+            break
+
+if __name__ == "__main__":
+    main()
