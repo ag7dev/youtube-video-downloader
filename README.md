@@ -20,7 +20,7 @@ Before running this script, ensure that the following software is installed on y
     winget install ffmpeg
     ```
 
-3. **Required Python packages** - You can install the required packages by running the following command:
+3. **Required Python packages** - You can install the required packages by running the following command or simply use `install.bat` which installs everything automatically:
 
     ```bash
     pip install -r requirements.txt
@@ -28,7 +28,8 @@ Before running this script, ensure that the following software is installed on y
 
 ## Usage
 1. Clone this repository or download the script.
-2. Run the script using Python:
+2. On Windows, run `install.bat` (requires admin rights) to automatically install dependencies (including FFmpeg) and start the downloader.
+   If everything is already installed, you can run the script using Python:
 
     ```bash
     python downloader.py
